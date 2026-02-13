@@ -37,5 +37,8 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
           message: |
-           ✅ <b>IKUUU 签到通知</b>
+           ✅ *IKUUU 签到通知*
+           ——————————————
+           ⏱ 签到时间：${{ github.run_started_at }}
+           📊 签到结果：
            ${{ steps.checkin.outputs.result }}
