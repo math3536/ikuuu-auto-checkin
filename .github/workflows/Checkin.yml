@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  run:
+  checkin:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,7 +21,6 @@ jobs:
         with:
           node-version: "18"
 
-      # 如果你有 package.json，就用 npm ci / npm install
       - name: Install deps
         if: hashFiles('package.json') != ''
         run: |
@@ -33,6 +32,5 @@ jobs:
           CONFIG: ${{ secrets.CONFIG }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          SCKEY: ${{ secrets.SCKEY }}
         run: |
           node main.js
