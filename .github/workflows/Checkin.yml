@@ -38,8 +38,4 @@ jobs:
           format: markdown
           message: |
            ✅ <b>IKUUU 签到通知</b>
-
-            ⏱ 签到时间：<code>${{ steps.checkin.outputs.run_time }}</code>
-
-            📊 <b>签到汇总</b>
-            <pre>${{ steps.checkin.outputs.result_html }}</pre>
+           ${{ steps.checkin.outputs.result }}
