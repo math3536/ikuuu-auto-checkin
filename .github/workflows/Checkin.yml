@@ -3,12 +3,13 @@ name: IKUUU-Auto-Checkin
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 2 * * 0"  # UTC 时间
+    - cron: "0 0 * * *" # UTC 00:00 = 北京时间 08:00
 
 jobs:
   checkin:
     name: Checkin
     runs-on: ubuntu-latest
+
     env:
       ACCOUNTS: ${{ secrets.ACCOUNTS }}
       HOST: ${{ secrets.HOST }}
@@ -18,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js latest
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: latest
@@ -27,7 +28,22 @@ jobs:
         id: checkin
         shell: bash
         run: |
-          node main.js
+          set -u
+
+          # 1) 生成北京时间（一定有值）
+          run_time="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')"
+          echo "run_time=$run_time" >> "$GITHUB_OUTPUT"
+
+          # 2) 跑脚本并抓输出（不让 workflow 因脚本非0直接中断，保证能写 output）
+          output="$(node main.js 2>&1 || true)"
+          echo "$output"
+
+          # 3) 写入多行 output：result
+          {
+            echo "result<<EOF"
+            echo "$output"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Notify
         if: ${{ always() && env.TELEGRAM_TOKEN && env.TELEGRAM_TO }}
@@ -37,8 +53,8 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
           message: |
-           ✅ *IKUUU 签到通知*
-           ——————————————
-           ⏱ 签到时间：${{ github.run_started_at }}
-           📊 签到结果：
-           ${{ steps.checkin.outputs.result }}
+            ✅ *IKUUU 签到通知*
+            ——————————————
+            ⏱ 签到时间：${{ steps.checkin.outputs.run_time }}
+            📊 签到结果：
+            ${{ steps.checkin.outputs.result }}
