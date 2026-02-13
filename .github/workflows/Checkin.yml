@@ -39,4 +39,3 @@ jobs:
           message: |
             *iKuuu 自动签到*
             ${{ steps.checkin.outputs.result }}
-            [任务详情](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
