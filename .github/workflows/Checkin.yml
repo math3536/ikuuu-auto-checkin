@@ -1,60 +1,53 @@
-name: IKUUU-Auto-Checkin
+name: Common airport Checkin
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 0  * * 0" # UTC 00:00 = 北京时间 08:00
+    # Cron 使用 UTC。下面是每天 UTC 14:00 运行
+    # 你原来注释写的是 UTC+8 06:00，但 14:00 UTC 实际是 UTC+8 22:00
+    # 如需北京时间 06:00（UTC+8），应写成 22:00 UTC：0 22 * * *
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: checkin
+  cancel-in-progress: true
 
 jobs:
   checkin:
-    name: Checkin
     runs-on: ubuntu-latest
 
-    env:
-      ACCOUNTS: ${{ secrets.ACCOUNTS }}
-      HOST: ${{ secrets.HOST }}
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      TELEGRAM_TO: ${{ secrets.TELEGRAM_TO }}
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up python
+        uses: actions/setup-python@v5
         with:
-          node-version: latest
+          python-version: "3.10"
+          cache: "pip"
 
-      - name: Checkin
-        id: checkin
-        shell: bash
+      - name: Random sleep
+        if: github.event_name == 'schedule'
+        run: sleep $(shuf -i 10-300 -n 1)
+
+      - name: Install dependencies
         run: |
-          set -u
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-          # 1) 生成北京时间（一定有值）
-          run_time="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')"
-          echo "run_time=$run_time" >> "$GITHUB_OUTPUT"
+      - name: Run sign
+        env:
+          URL: ${{ secrets.URL }}
+          CONFIG: ${{ secrets.CONFIG }}
 
-          # 2) 跑脚本并抓输出（不让 workflow 因脚本非0直接中断，保证能写 output）
-          output="$(node main.js 2>&1 || true)"
-          echo "$output"
+          # Telegram
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
-          # 3) 写入多行 output：result
-          {
-            echo "result<<EOF"
-            echo "$output"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          # 兼容：Server酱（可不填）
+          SCKEY: ${{ secrets.SCKEY }}
 
-      - name: Notify
-        if: ${{ always() && env.TELEGRAM_TOKEN && env.TELEGRAM_TO }}
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_TO }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          format: markdown
-          message: |
-            ✅ *IKUUU 签到通知*
-            ——————————————
-            ⏱ 签到时间：${{ steps.checkin.outputs.run_time }}
-            📊 签到结果：
-            ${{ steps.checkin.outputs.result }}
+          # 可选：如果已签到就不推送（使用我给你的优化版 main.py 才生效）
+          # SKIP_PUSH_IF_ALREADY_CHECKED: "true"
+        run: |
+          python -u ./main.py
