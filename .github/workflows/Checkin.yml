@@ -3,7 +3,7 @@ name: IKUUU-Auto-Checkin
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * *"  # UTC 时间
 
 jobs:
   checkin:
@@ -38,7 +38,5 @@ jobs:
           format: markdown
           message: |
             *iKuuu 自动签到*
-
-            ${{ steps.checkin.outputs.result  }}
-
+            ${{ steps.checkin.outputs.result }}
             [任务详情](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
