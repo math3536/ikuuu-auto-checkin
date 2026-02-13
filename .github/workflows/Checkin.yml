@@ -1,11 +1,8 @@
-name: Common airport Checkin
+name: Checkin
 
 on:
   schedule:
-    # Cron 使用 UTC。下面是每天 UTC 14:00 运行
-    # 你原来注释写的是 UTC+8 06:00，但 14:00 UTC 实际是 UTC+8 22:00
-    # 如需北京时间 06:00（UTC+8），应写成 22:00 UTC：0 22 * * *
-    - cron: "0 22 * * *"
+    - cron: "0 22 * * *"   # 北京时间 06:00（UTC+8）= UTC 22:00
   workflow_dispatch:
 
 concurrency:
@@ -13,41 +10,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checkin:
+  run:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up python
-        uses: actions/setup-python@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.10"
-          cache: "pip"
+          node-version: "18"
 
-      - name: Random sleep
-        if: github.event_name == 'schedule'
-        run: sleep $(shuf -i 10-300 -n 1)
-
-      - name: Install dependencies
+      # 如果你有 package.json，就用 npm ci / npm install
+      - name: Install deps
+        if: hashFiles('package.json') != ''
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          npm ci || npm install
 
-      - name: Run sign
+      - name: Run
         env:
           URL: ${{ secrets.URL }}
           CONFIG: ${{ secrets.CONFIG }}
-
-          # Telegram
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-
-          # 兼容：Server酱（可不填）
           SCKEY: ${{ secrets.SCKEY }}
-
-          # 可选：如果已签到就不推送（使用我给你的优化版 main.py 才生效）
-          # SKIP_PUSH_IF_ALREADY_CHECKED: "true"
         run: |
-          python -u ./main.py
+          node main.js
