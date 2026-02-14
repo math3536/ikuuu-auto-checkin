@@ -5,8 +5,8 @@
  * - URL: 站点地址，如 "https://ikuuu.nl" 或 "ikuuu.nl"
  * - CONFIG: 单账户 JSON，例如:
  *   {"name":"账号1","email":"a@example.com","passwd":"your_password"}
- * - TG_BOT_TOKEN: Telegram Bot Token（可选；不填则不通知）
- * - TG_CHAT_ID: Telegram chat id（可选；不填则不通知）
+ * - TELEGRAM_TOKEN: Telegram Bot Token（可选；不填则不通知）
+ * - TELEGRAM_TO: Telegram chat id（可选；不填则不通知）
  *
  * 输出：
  * - 写入 GITHUB_OUTPUT: result
@@ -54,8 +54,8 @@ function getSetCookieArray(headers) {
 }
 
 async function sendTelegram(text) {
-  const token = (process.env.TG_BOT_TOKEN || "").trim();
-  const chatId = (process.env.TG_CHAT_ID || "").trim();
+  const token = (process.env.TELEGRAM_TOKEN || "").trim();
+  const chatId = (process.env.TELEGRAM_TO || "").trim();
   if (!token || !chatId) return; // 未配置就不发
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
