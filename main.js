@@ -1,32 +1,49 @@
 /**
- * 单账户 Ikuuu 自动签到脚本（Node 18 / GitHub Actions）
+ * IKUUU 自动签到脚本（Node 18 / GitHub Actions）
  *
- * 环境变量（统一命名）：
+ * 环境变量：
  * - URL: 站点地址，如 "https://ikuuu.nl" 或 "ikuuu.nl"
- * - CONFIG: 单账户 JSON，例如:
- *   {"name":"账号1","email":"a@example.com","passwd":"your_password"}
- * - TELEGRAM_TOKEN: Telegram Bot Token（可选；不填则不通知）
- * - TELEGRAM_TO: Telegram chat id（可选；不填则不通知）
+ * - CONFIG:
+ *    1) 单账号对象：
+ *       {"name":"jack","email":"a@example.com","passwd":"your_password"}
+ *    2) 多账号数组：
+ *       [{"name":"a","email":"a@xx.com","passwd":"p1"},{"name":"b","email":"b@xx.com","passwd":"p2"}]
  *
- * 输出：
- * - 写入 GITHUB_OUTPUT: result
+ * Telegram（可选）：
+ * - TELEGRAM_TOKEN / TELEGRAM_TO
  */
 
 "use strict";
 
 const { appendFileSync } = require("fs");
 
+// ---------------------- GitHub Actions Output ----------------------
+
 function setGitHubOutput(name, value) {
   const out = process.env.GITHUB_OUTPUT;
-  if (!out) return; // 本地运行可能没有
+  if (!out) return;
   appendFileSync(out, `${name}<<EOF\n${value}\nEOF\n`);
 }
+
+// ---------------------- Utils ----------------------
 
 function normalizeBaseUrl(input) {
   const raw = (input || "").trim();
   if (!raw) return "https://ikuuu.nl";
   if (raw.startsWith("http://") || raw.startsWith("https://")) return raw.replace(/\/+$/, "");
   return `https://${raw.replace(/\/+$/, "")}`;
+}
+
+function getSetCookieArray(headers) {
+  // Node 18 (undici) 支持 headers.getSetCookie()
+  if (headers && typeof headers.getSetCookie === "function") {
+    const arr = headers.getSetCookie();
+    if (Array.isArray(arr) && arr.length) return arr;
+  }
+  // 兼容：只有一条 set-cookie 的情况
+  const single = headers?.get?.("set-cookie");
+  if (single) return [single];
+  return [];
 }
 
 function formatCookie(rawCookieArray) {
@@ -36,32 +53,42 @@ function formatCookie(rawCookieArray) {
     const match = cookieString.match(/^\s*([^=]+)=([^;]*)/);
     if (match) cookiePairs.set(match[1].trim(), match[2].trim());
   }
-  return Array.from(cookiePairs).map(([k, v]) => `${k}=${v}`).join("; ");
+  return Array.from(cookiePairs)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
 }
 
-function getSetCookieArray(headers) {
-  // Node 18 (undici) 支持 headers.getSetCookie()
-  if (headers && typeof headers.getSetCookie === "function") {
-    const arr = headers.getSetCookie();
-    if (Array.isArray(arr) && arr.length) return arr;
-  }
-
-  // 兼容：退化读取单个 set-cookie（若服务端合并/或只有一条）
-  const single = headers?.get?.("set-cookie");
-  if (single) return [single];
-
-  return [];
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-async function sendTelegram(text) {
+function formatTime(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = date.getFullYear();
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
+// ---------------------- Telegram ----------------------
+
+async function sendTelegramHtml(html) {
   const token = (process.env.TELEGRAM_TOKEN || "").trim();
   const chatId = (process.env.TELEGRAM_TO || "").trim();
-  if (!token || !chatId) return; // 未配置就不发
+  if (!token || !chatId) return;
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   const body = new URLSearchParams({
     chat_id: chatId,
-    text,
+    text: html,
     parse_mode: "HTML",
     disable_web_page_preview: "true",
   });
@@ -71,116 +98,217 @@ async function sendTelegram(text) {
     const errTxt = await resp.text().catch(() => "");
     throw new Error(`Telegram 通知失败: HTTP ${resp.status} ${errTxt}`.trim());
   }
+
+  console.log("Telegram: 已发送通知");
 }
+
+// ---------------------- Config ----------------------
+
+function parseAccountsFromConfig() {
+  if (!process.env.CONFIG) throw new Error("❌ 未配置 CONFIG。");
+
+  let obj;
+  try {
+    obj = JSON.parse(process.env.CONFIG);
+  } catch {
+    throw new Error("❌ CONFIG 不是合法 JSON。");
+  }
+
+  const arr = Array.isArray(obj) ? obj : [obj];
+  if (!arr.length) throw new Error("❌ CONFIG 为空。");
+
+  return arr.map((a, idx) => {
+    if (!a || typeof a !== "object") throw new Error(`❌ CONFIG 第 ${idx + 1} 个账号内容无效。`);
+    if (!a.email || !a.passwd) throw new Error(`❌ CONFIG 第 ${idx + 1} 个账号缺少 email/passwd。`);
+    return {
+      name: a.name || a.email,
+      email: String(a.email),
+      passwd: String(a.passwd),
+    };
+  });
+}
+
+// ---------------------- IKUUU Actions ----------------------
 
 async function logIn({ baseUrl, account }) {
   const logInUrl = `${baseUrl}/auth/login`;
 
   const formData = new FormData();
-  // 站点常见要求带 host 字段（原脚本也带了）：
   formData.append("host", new URL(baseUrl).host);
   formData.append("email", account.email);
   formData.append("passwd", account.passwd);
   formData.append("code", "");
   formData.append("remember_me", "off");
 
-  const resp = await fetch(logInUrl, { method: "POST", body: formData });
-  if (!resp.ok) throw new Error(`登录请求失败 - HTTP ${resp.status}`);
+  const response = await fetch(logInUrl, { method: "POST", body: formData });
+  const text = await response.text();
 
-  const json = await resp.json().catch(() => null);
-  if (!json || typeof json.ret === "undefined") {
-    throw new Error("登录响应解析失败（非预期 JSON）");
-  }
-  if (json.ret !== 1) {
-    throw new Error(`登录失败: ${json.msg || "unknown error"}`);
-  }
+  const cookies = formatCookie(getSetCookieArray(response.headers));
+  if (!cookies) return { ok: false, cookies: "", text };
 
-  const rawCookies = getSetCookieArray(resp.headers);
-  if (!rawCookies.length) throw new Error("获取 Cookie 失败（Set-Cookie 为空）");
-
-  return { cookie: formatCookie(rawCookies), loginMsg: json.msg || "login ok" };
+  return { ok: true, cookies, text };
 }
 
-async function checkIn({ baseUrl, cookie }) {
+async function checkIn({ baseUrl, cookies }) {
   const checkInUrl = `${baseUrl}/user/checkin`;
 
-  const resp = await fetch(checkInUrl, {
+  const res = await fetch(checkInUrl, {
     method: "POST",
-    headers: { Cookie: cookie },
+    headers: {
+      cookie: cookies,
+      "content-type": "application/x-www-form-urlencoded",
+      referer: `${baseUrl}/user`,
+    },
+    body: new URLSearchParams({}),
   });
 
-  if (!resp.ok) throw new Error(`签到请求失败 - HTTP ${resp.status}`);
-
-  const json = await resp.json().catch(() => null);
-  if (!json) throw new Error("签到响应解析失败（非预期 JSON）");
-
-  // 常见字段：msg
-  return json.msg || JSON.stringify(json);
+  const json = await res.json().catch(() => null);
+  return { ok: res.ok, json };
 }
 
-function parseAccountFromConfig() {
-  if (!process.env.CONFIG) throw new Error("❌ 未配置 CONFIG。");
+// ---------------------- Notify Builder (更像卡片) ----------------------
 
-  let obj;
-  try {
-    obj = JSON.parse(process.env.CONFIG);
-  } catch (e) {
-    throw new Error("❌ CONFIG 不是合法 JSON。");
-  }
-
-  // 只支持单账户对象；如果你传了数组，自动取第一个并提示
-  const account = Array.isArray(obj) ? obj[0] : obj;
-
-  if (!account || typeof account !== "object") throw new Error("❌ CONFIG 内容无效。");
-  if (!account.email || !account.passwd) {
-    throw new Error("❌ CONFIG 缺少 email/passwd。");
-  }
-
-  return {
-    name: account.name || account.email,
-    email: String(account.email),
-    passwd: String(account.passwd),
-  };
+function classifyStatus(text) {
+  const s = String(text || "");
+  if (/(失败|错误|异常|error|fail)/i.test(s)) return "fail";
+  if (/(已签到|已经签到|似乎已经签到|重复签到)/.test(s)) return "already";
+  if (/(成功|success)/i.test(s)) return "success";
+  return "info";
 }
 
-async function main() {
+function statusEmoji(kind) {
+  if (kind === "success") return "✅";
+  if (kind === "already") return "⚠️";
+  if (kind === "fail") return "❌";
+  return "ℹ️";
+}
+
+function prettyLoginText(raw) {
+  const kind = classifyStatus(raw);
+  const emoji = statusEmoji(kind);
+
+  if (kind === "success") return `${emoji} 登录成功`;
+  if (kind === "fail") return `${emoji} 登录失败`;
+  return `${emoji} ${String(raw || "登录信息")}`;
+}
+
+function prettyCheckinText(raw) {
+  const s = String(raw || "");
+  const kind = classifyStatus(s);
+  const emoji = statusEmoji(kind);
+
+  if (kind === "success") return `${emoji} 签到成功`;
+  if (kind === "already") return `${emoji} 已签到（无需重复）`;
+
+  return `${emoji} ${s || "签到结果未知"}`;
+}
+
+function buildAccountBlock(name, { loginRaw, checkinRaw, extraRaw = [] }) {
+  const lines = [];
+  lines.push(`👤 ${name}`);
+
+  if (loginRaw !== undefined) lines.push(`  🔐 ${prettyLoginText(loginRaw)}`);
+  if (checkinRaw !== undefined) lines.push(`  🎯 ${prettyCheckinText(checkinRaw)}`);
+
+  for (const x of extraRaw) {
+    const kind = classifyStatus(x);
+    lines.push(`  🧾 ${statusEmoji(kind)} ${String(x)}`);
+  }
+
+  return lines;
+}
+
+function detectOverallIcon(lines) {
+  const text = lines.join("\n");
+  if (/(失败|错误|异常|error|fail)/i.test(text)) return "❌";
+  if (/(已签到|已经签到|似乎已经签到|重复签到)/.test(text)) return "⚠️";
+  if (/(成功|success)/i.test(text)) return "✅";
+  return "ℹ️";
+}
+
+function buildTelegramHtml({ timeStr, titleName, lines }) {
+  const icon = detectOverallIcon(lines);
+
+  const safeTitle = escapeHtml(titleName);
+  const safeTime = escapeHtml(timeStr);
+  const safeLines = lines.map((l) => escapeHtml(l)).join("\n");
+
+  return (
+    `${icon} <b>${safeTitle}</b>\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `🕒 <b>时间：</b>${safeTime}\n\n` +
+    `📊 <b>执行结果：</b>\n` +
+    `<pre>${safeLines}</pre>\n` +
+    `━━━━━━━━━━━━━━━━━━\n` +
+    `<i>#ikuuu #checkin</i>`
+  );
+}
+
+// ---------------------- Main ----------------------
+
+(async () => {
   const baseUrl = normalizeBaseUrl(process.env.URL);
-  const account = parseAccountFromConfig();
+  const accounts = parseAccountsFromConfig();
 
-  const title = `【Ikuuu 签到】${account.name}`;
-  let finalMsg = "";
-  let exitCode = 0;
+  const timeStr = formatTime(new Date());
+  const summaryLines = [];
 
-  try {
-    console.log(`${account.name}: 登录中...`);
-    const { cookie, loginMsg } = await logIn({ baseUrl, account });
-    console.log(`${account.name}: ${loginMsg}`);
+  for (const account of accounts) {
+    try {
+      const loginRes = await logIn({ baseUrl, account });
 
-    console.log(`${account.name}: 签到中...`);
-    const checkinMsg = await checkIn({ baseUrl, cookie });
-    console.log(`${account.name}: ${checkinMsg}`);
+      if (!loginRes.ok) {
+        summaryLines.push(
+          ...buildAccountBlock(account.name, {
+            loginRaw: "登录失败（未获取到会话 Cookie）",
+            extraRaw: ["请检查账号密码 / 站点是否变更 / 是否需要验证码"],
+          }),
+          "" // 账号间空行
+        );
+        continue;
+      }
 
-    finalMsg = `${title}\n✅ ${checkinMsg}\n站点：${baseUrl}`;
-    setGitHubOutput("result", `✅ ${checkinMsg}`);
-  } catch (err) {
-    exitCode = 1;
-    const msg = err?.message || String(err);
-    console.error(`${account.name}: ❌ ${msg}`);
+      const checkinRes = await checkIn({ baseUrl, cookies: loginRes.cookies });
+      const msg = checkinRes?.json?.msg || (checkinRes.ok ? "签到请求已发送" : "签到请求失败");
 
-    finalMsg = `${title}\n❌ ${msg}\n站点：${baseUrl}`;
-    setGitHubOutput("result", `❌ ${msg}`);
+      summaryLines.push(
+        ...buildAccountBlock(account.name, {
+          loginRaw: "登录成功",
+          checkinRaw: msg,
+        }),
+        ""
+      );
+    } catch (e) {
+      const err = String(e?.message || e);
+      summaryLines.push(
+        ...buildAccountBlock(account.name, {
+          loginRaw: "异常",
+          extraRaw: [`异常：${err}`],
+        }),
+        ""
+      );
+    }
   }
 
-  // 通知（可选）
+  // 去掉最后一个多余空行
+  while (summaryLines.length && summaryLines[summaryLines.length - 1] === "") summaryLines.pop();
+
+  const resultText = summaryLines.join("\n");
+  console.log(resultText);
+  setGitHubOutput("result", resultText);
+
+  // 汇总只发一条
   try {
-    await sendTelegram(finalMsg);
-    console.log("Telegram: 已发送通知");
+    const html = buildTelegramHtml({
+      timeStr,
+      titleName: "IKUUU 签到通知（汇总）",
+      lines: summaryLines.length ? summaryLines : ["无可用结果（CONFIG 可能为空）"],
+    });
+    await sendTelegramHtml(html);
   } catch (e) {
-    // 通知失败不影响签到主流程（但会在日志里体现）
     console.error(String(e?.message || e));
   }
-
-  process.exit(exitCode);
-}
-
-main();
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
