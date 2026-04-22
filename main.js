@@ -153,8 +153,8 @@ async function logIn({ baseUrl, account, retryCount = 0 }) {
                 `🚨 <b>IKUUU 登录需要人工验证</b>\n\n` +
                 `👤 账号: ${account.name}\n` +
                 `📧 邮箱: ${account.email}\n\n` +
-                `请访问 ${baseUrl}/auth/login 完成验证\n` +
-                `或发送验证码给 Telegram Bot`
+                `🔗 <a href="${baseUrl}/auth/login">点击这里完成验证</a>\n` +
+                `验证完成后发送验证码给 Telegram Bot`
             );
             
             return { 
@@ -331,6 +331,7 @@ function buildResultLine(account, result) {
 
 async function main() {
     const baseUrl = normalizeBaseUrl(process.env.URL);
+    const loginUrl = `${baseUrl}/auth/login`;
     const accounts = parseAccountsFromConfig();
     const timeStr = formatTime();
     const results = [];
@@ -423,14 +424,21 @@ async function main() {
 
     // 发送 Telegram 通知
     const icon = results.some(r => r.result.loginOk) ? "✅" : "❌";
-    const html = 
+    const hasManualVerify = results.some(r => r.result.needsManualVerification);
+    
+    let html = 
         `${icon} <b>IKUUU 签到结果</b>\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         `🕒 ${timeStr}\n` +
-        `🌐 ${baseUrl}\n\n` +
+        `🌐 <a href="${loginUrl}">${baseUrl}/auth/login</a>\n\n` +
         `<pre>${summaryLines.map(l => l.replace(/</g, "&lt;").replace(/>/g, "&gt;")).join("\n\n")}</pre>\n` +
-        `━━━━━━━━━━━━━━━━━━\n` +
-        `#ikuuu #checkin`;
+        `━━━━━━━━━━━━━━━━━━\n`;
+    
+    if (hasManualVerify) {
+        html += `\n🚨 <b>请手动完成验证</b>：<a href="${loginUrl}">点击这里登录</a>\n`;
+    }
+    
+    html += `#ikuuu #checkin`;
 
     await sendTelegramMessage(html);
 
