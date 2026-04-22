@@ -208,6 +208,17 @@ async function logIn({ baseUrl, account, retryCount = 0 }) {
         };
     }
     
+    // 尝试解析JSON响应，提取人类可读的错误信息
+    try {
+        const json = JSON.parse(responseText);
+        if (json.msg) {
+            // JSON.parse 会自动解码 \uXXXX
+            return { ok: false, cookies, text: json.msg };
+        }
+    } catch (_) {
+        // 不是JSON，继续其他检查
+    }
+    
     // 检查是否被重定向回登录页面
     if (response.status === 302 || responseText.includes("登录")) {
         return { ok: false, cookies: "", text: "登录失败，请检查账号密码" };
